@@ -1230,7 +1230,7 @@ async function run() {
 
   // Start Express UI Server
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`[UI] Launching the interactive Web Dashboard!`);
     console.log(`[UI] => Please open http://localhost:${PORT} in your browser.`);
   });
@@ -1239,7 +1239,7 @@ async function run() {
     authStrategy: new NoAuth(),
     puppeteer: {
       headless: true,
-      executablePath: '/usr/bin/google-chrome-stable',
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || (process.platform === 'linux' ? '/usr/bin/google-chrome' : undefined),
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
