@@ -1235,11 +1235,24 @@ async function run() {
     console.log(`[UI] => Please open http://localhost:${PORT} in your browser.`);
   });
 
+  const chromePaths = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    '/opt/google/chrome/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium'
+  ];
+  let resolvedChromePath = chromePaths.find(p => p && fs.existsSync(p));
+  if (!resolvedChromePath && process.platform !== 'win32') {
+    console.warn("[WARN] Could not find Chrome/Chromium installation. whatsapp-web.js may fail to start!");
+  }
+
   const client = new Client({
     authStrategy: new NoAuth(),
     puppeteer: {
       headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || (process.platform === 'linux' ? '/usr/bin/google-chrome' : undefined),
+      executablePath: resolvedChromePath || undefined,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",

@@ -1,5 +1,4 @@
 # Environment & secrets
-.env
 
 # Dependencies
 node_modules/
@@ -21,7 +20,6 @@ Thumbs.db
 .DS_Store
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -33,3 +31,4 @@ Thumbs.db
 # Internal dev notes
 AI_CONTEXT.md
 names_list.txt
+config.bat
