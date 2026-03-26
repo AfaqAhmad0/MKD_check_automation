@@ -3,24 +3,15 @@ FROM ghcr.io/puppeteer/puppeteer:latest
 # Set working directory
 WORKDIR /usr/src/app
 
-# Need to be root to chown copied files
-USER root
-
-# Copy package files
-COPY package*.json ./
+# Copy package files natively as the correct user to ensure Chrome caches in their home directory
+COPY --chown=pptruser:pptruser package*.json ./
 
 # Install dependencies
 RUN npm install
+RUN npx puppeteer browsers install chrome
 
 # Copy application source
-COPY . .
-
-# Claim permissions over the app directory so the app can create folders if needed
-RUN chown -R pptruser:pptruser /usr/src/app
-
-# Switch back to the non-privileged Puppeteer user for security
-USER pptruser
-
+COPY --chown=pptruser:pptruser . .
 
 # Expose port (Render sets PORT env)
 EXPOSE 3000
