@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout & Work Summaries</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="wa-auth-modal hidden" id="wa-auth-modal" role="dialog" aria-modal="true" aria-labelledby="wa-auth-title">
+    <div class="wa-auth-modal-card">
+      <h2 id="wa-auth-title">WhatsApp Login Required</h2>
+      <p id="wa-auth-subtext">Scan this QR code with your WhatsApp app to continue.</p>
+      <div class="wa-auth-qr-wrap">
+        <canvas id="wa-auth-qr-canvas"></canvas>
+      </div>
+      <p class="wa-auth-note">This screen stays locked until WhatsApp login is successful.</p>
+    </div>
+  </div>
+  
+  <div class="app-container checkout-wide">
+    <header class="top-nav">
+      <div class="logo">
+        <a href="/" class="logo" style="text-decoration:none; color:inherit;">
+          <div class="logo-icon" style="background:#ef4444;"></div>
+          <h1>Checkout Central</h1>
+        </a>
+      </div>
+      <nav class="main-nav">
+        <a href="/" class="nav-link">Check-In</a>
+        <a href="checkout.html" class="nav-link active">Checkout</a>
+        <button type="button" class="nav-link nav-link-btn" id="open-projects-modal-btn">Edit Projects</button>
+        <button type="button" class="nav-link nav-link-btn" id="open-groups-modal-btn">Edit Group Chats</button>
+      </nav>
+      <div class="status-badge" id="checkout-bot-status-badge" style="background: rgba(59, 130, 246, 0.2); color:#93c5fd;">
+        <span class="pulse-dot"></span>
+        <span id="checkout-bot-status-text">Connecting to WhatsApp...</span>
+      </div>
+    </header>
+
+    <main class="dashboard">
+
+      <section class="card control-panel checkout-control-panel" id="control-panel">
+        <p class="checkout-intro">This engine intercepts checkout signals (work summaries, video links, updates) and extracts exact project names matched to your CSV list.</p>
+
+        <div class="checkout-wa-loading" id="checkout-wa-loading">
+          <span class="checkout-wa-spinner" aria-hidden="true"></span>
+          <span id="checkout-wa-loading-text">Connecting to WhatsApp client. Compile action will unlock once ready.</span>
+          <a href="/" id="checkout-open-main-link" class="checkout-open-main-link hidden">Open Main Dashboard for QR Scan</a>
+        </div>
+
+        <div class="checkout-toolbar">
+          <div class="checkout-controls-grid">
+            <div class="input-group checkout-input-group compact-field">
+              <label for="hours-input">Lookback Hours</label>
+              <input type="number" id="hours-input" class="modern-input" value="24" min="1" max="720">
+            </div>
+
+            <div class="input-group checkout-input-group engine-field">
+              <label for="model-select">AI Engine</label>
+              <select id="model-select" class="modern-input">
+                <optgroup label="Google AI Studio">
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                </optgroup>
+                <optgroup label="Groq (Fast Inference)">
+                  <option value="groq:llama-3.3-70b-versatile" selected>Llama 3.3 70B (Groq Free)</option>
+                  <option value="groq:llama-3.1-8b-instant">Llama 3.1 8B (Groq Free)</option>
+                  <option value="groq:meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout (Groq Free)</option>
+                  <option value="groq:qwen/qwen3-32b">Qwen 3 32B (Groq)</option>
+                </optgroup>
+                <optgroup label="Cerebras">
+                  <option value="cerebras:llama3.1-8b">Llama 3.1 8B (Cerebras)</option>
+                  <option value="cerebras:qwen-3-235b-a22b-instruct-2507">Qwen 3 235B A22B Instruct 2507 (Cerebras)</option>
+                </optgroup>
+              </select>
+            </div>
+          </div>
+
+          <div class="checkout-action-area">
+            <div class="checkout-action-stack">
+              <button class="primary-btn checkout-run-btn" id="run-ai-btn">
+                <svg viewBox="0 0 24 24" fill="none" class="icon"><path d="M12 2L2 7l10 5 10-5-10-5zm0 9l-10 5 10 5 10-5-10-5z" fill="currentColor"/></svg>
+                Compile Summaries & Run AI
+              </button>
+              <label class="checkout-mode-toggle checkout-mode-below-btn">
+                <input type="checkbox" id="checkout-hard-rescan">
+                Hard Rescan (clear cached logs first)
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="checkout-progress hidden" id="checkout-progress-wrap">
+          <div class="checkout-progress-top">
+            <span class="checkout-phase" id="checkout-phase">Preparing...</span>
+            <span class="checkout-percent" id="checkout-percent">0%</span>
+          </div>
+          <div class="checkout-progress-track">
+            <div class="checkout-progress-fill" id="checkout-progress-fill"></div>
+          </div>
+          <p class="checkout-progress-sub" id="checkout-progress-sub">Waiting to start...</p>
+        </div>
+      </section>
+
+      <section class="card data-section">
+        <div class="section-header">
+          <h2>Parsed Developer Projects</h2>
+          <div class="stats">
+            <span class="stat-pill success">Analyzed: <b id="stat-parsed">0</b></span>
+          </div>
+        </div>
+        
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Developer</th>
+                <th class="col-group">Group Name</th>
+                <th class="col-projects">Mapped Projects</th>
+                <th class="text-right">Original Message</th>
+                <th class="text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="checkout-body">
+              <tr>
+                <td colspan="5" style="text-align:center; color:var(--text-muted);">Click "Compile Summaries & Run AI" to extract project mappings.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="repo-check-area" id="repo-check-area">
+          <div class="repo-check-toolbar">
+            <input type="text" id="repo-lookback-input" class="modern-input" style="width: 80px;" placeholder="e.g. 48h" value="48h">
+            <button class="primary-btn repo-check-btn" id="check-repo-btn" disabled>
+              <svg viewBox="0 0 24 24" fill="none" class="icon"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>
+              Check Repo Updates
+            </button>
+            <span class="repo-check-hint" id="repo-check-hint">Run AI extraction first to enable repo checking</span>
+          </div>
+
+          <div class="repo-check-progress hidden" id="repo-check-progress">
+            <div class="checkout-progress-top">
+              <span class="checkout-phase" id="repo-check-phase">Checking repos...</span>
+              <span class="checkout-percent" id="repo-check-percent">0%</span>
+            </div>
+            <div class="checkout-progress-track">
+              <div class="checkout-progress-fill" id="repo-check-fill" style="background: linear-gradient(90deg, #0d9488, #22d3ee);"></div>
+            </div>
+            <p class="checkout-progress-sub" id="repo-check-sub">Querying Gitea API...</p>
+          </div>
+
+          <div class="repo-results-summary hidden" id="repo-results-summary"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div class="projects-modal hidden" id="projects-modal" role="dialog" aria-modal="true" aria-labelledby="projects-modal-title">
+    <div class="projects-modal-card">
+      <div class="projects-modal-header">
+        <h2 id="projects-modal-title">Project Catalog</h2>
+        <button type="button" class="projects-modal-close" id="close-projects-modal-btn" aria-label="Close project editor">x</button>
+      </div>
+      <p class="projects-modal-sub">Double-click any project tag to rename it. Hover a tag to remove it.</p>
+
+      <div class="projects-add-row" style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+        <input type="text" id="projects-new-input" class="modern-input projects-new-input" placeholder="Project name (e.g. My App)">
+        <input type="text" id="projects-repos-input" class="modern-input" placeholder="Repo links (comma separated, e.g. owner/repo, http...)">
+        <div style="display:flex; gap: 0.5rem;">
+          <button type="button" class="primary-btn projects-add-btn" id="projects-add-btn" style="flex:1;">Add Project</button>
+          <button type="button" class="primary-btn hidden" id="projects-cancel-btn" style="background:var(--danger);">Cancel</button>
+        </div>
+      </div>
+
+      <div class="projects-tags-grid" id="projects-tags-grid"></div>
+    </div>
+  </div>
+
+  <div class="groups-modal hidden" id="groups-modal" role="dialog" aria-modal="true" aria-labelledby="groups-modal-title">
+    <div class="groups-modal-card">
+      <div class="groups-modal-header">
+        <h2 id="groups-modal-title">Employee Group Chats</h2>
+        <button type="button" class="groups-modal-close" id="close-groups-modal-btn" aria-label="Close group editor">x</button>
+      </div>
+      <p class="groups-modal-sub">Edit Name, Group Name, and Type. Saving writes employee_groups.csv with Checkins set to 0 for every row.</p>
+
+      <div class="groups-toolbar">
+        <div class="groups-add-inline">
+          <input type="text" id="groups-new-name" class="modern-input groups-input" placeholder="Name">
+          <input type="text" id="groups-new-group" class="modern-input groups-input" placeholder="Group Name">
+          <select id="groups-new-type" class="modern-input groups-select">
+            <option value="dev">dev</option>
+            <option value="qa">qa</option>
+            <option value="tester">tester</option>
+            <option value="va">va</option>
+            <option value="trainee">trainee</option>
+          </select>
+          <button type="button" class="primary-btn groups-add-inline-btn" id="groups-add-row-btn">Add New</button>
+        </div>
+        <button type="button" class="primary-btn" id="groups-save-btn">Save CSV</button>
+      </div>
+
+      <div class="groups-table-wrap">
+        <table class="groups-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Group Name</th>
+              <th>Type</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="groups-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="checkout.js?v=9994"></script>
+  <script src="projects-modal.js"></script>
+  <script src="groups-modal.js"></script>
+  <script src="settings-modal.js"></script>
+</body>
+</html>

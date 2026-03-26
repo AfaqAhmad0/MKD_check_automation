@@ -1,0 +1,18 @@
+{
+  "rules": [
+    {
+      "name": "checkin_detection",
+      "pattern": "check(?:ed|ing|s)?[\\s-]?in(?:s)?\\b",
+      "flags": "i",
+      "action": "log"
+    },
+    {
+      "name": "checkout_detection",
+      "pattern": "(?:check(?:ed|ing|s)?[\\s-]?out|work[\\s-]*summary|repo[\\s-]*update[\\s-]*status|video[\\s-]*summary)",
+      "flags": "i",
+      "action": "log"
+    }
+  ],
+  "logFile": "logs/matches.json",
+  "sessionPath": "./session"
+}

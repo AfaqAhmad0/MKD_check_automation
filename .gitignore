@@ -1,0 +1,35 @@
+# Environment & secrets
+.env
+
+# Dependencies
+node_modules/
+
+# WhatsApp session data (contains auth tokens)
+session/
+.wwebjs_cache/
+
+# Runtime data & logs
+logs/
+
+# User-specific CSV data (generated at runtime)
+checkout_projects.csv
+employee_groups.csv
+projects.csv
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Gemini / Antigravity workspace
+.gemini/
+.github/
+
+# Internal dev notes
+AI_CONTEXT.md
+names_list.txt

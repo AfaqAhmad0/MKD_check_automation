@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Check-In Tracking Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="wa-auth-modal hidden" id="wa-auth-modal" role="dialog" aria-modal="true" aria-labelledby="wa-auth-title">
+    <div class="wa-auth-modal-card">
+      <h2 id="wa-auth-title">WhatsApp Login Required</h2>
+      <p id="wa-auth-subtext">Scan this QR code with your WhatsApp app to continue.</p>
+      <div class="wa-auth-qr-wrap">
+        <canvas id="wa-auth-qr-canvas"></canvas>
+      </div>
+      <p class="wa-auth-note">This screen stays locked until WhatsApp login is successful.</p>
+    </div>
+  </div>
+  
+  <div class="app-container">
+    <header class="top-nav">
+      <div class="logo">
+        <div class="logo-icon"></div>
+        <h1>Check-In Tracker</h1>
+      </div>
+      <nav class="main-nav">
+        <a href="/" class="nav-link active">Check-In</a>
+        <a href="checkout.html" class="nav-link">Checkout</a>
+        <button type="button" class="nav-link nav-link-btn" id="open-projects-modal-btn">Edit Projects</button>
+        <button type="button" class="nav-link nav-link-btn" id="open-groups-modal-btn">Edit Group Chats</button>
+      </nav>
+      <div class="status-badge" id="bot-status-badge">
+        <span class="pulse-dot"></span>
+        <span id="bot-status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      
+      <!-- QR Code Section -->
+      <section class="card qr-section hidden" id="qr-section">
+        <h2>Authentication Required</h2>
+        <p>Scan this QR code with your WhatsApp app to link the bot.</p>
+        <div class="qr-container">
+          <canvas id="qr-canvas"></canvas>
+        </div>
+      </section>
+
+      <!-- Control Panel -->
+      <section class="card control-panel hidden" id="control-panel">
+        <div class="setup-bar" id="setup-bar">
+          <div class="input-group">
+            <label for="hours-input">Historical Lookback Window (Hours)</label>
+            <input type="number" id="hours-input" value="24" min="0" max="720">
+          </div>
+          <div class="input-group" style="min-width: 220px;">
+            <label for="hard-rescan-input">Scan Mode</label>
+            <label style="display:flex; align-items:center; gap:0.5rem; color:var(--text-muted); font-size:0.9rem;">
+              <input type="checkbox" id="hard-rescan-input">
+              Hard Rescan (clear cached logs first)
+            </label>
+          </div>
+          <button class="primary-btn" id="start-btn">
+            <svg viewBox="0 0 24 24" fill="none" class="icon"><path d="M5 3l14 9-14 9V3z" fill="currentColor"/></svg>
+            Start Scan
+          </button>
+          
+        </div>
+        
+        <!-- Progress Bar -->
+        <div class="progress-container hidden" id="progress-container">
+          <div class="progress-details">
+            <span class="progress-label" id="progress-label">Scanning past messages...</span>
+            <span class="progress-percentage" id="progress-percentage">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <p class="current-target" id="current-target">Initializing...</p>
+        </div>
+      </section>
+
+      <!-- Data Table Section -->
+      <section class="card data-section hidden" id="data-section">
+        <div class="section-header">
+          <h2>Tracker Status</h2>
+          <div class="filter-group">
+            <label for="status-filter">Filter:</label>
+            <select id="status-filter" class="filter-select">
+              <option value="all">Show All</option>
+              <option value="missing">Missing Only</option>
+              <option value="checked-in">Checked In Only</option>
+            </select>
+            <button class="primary-btn" id="reset-btn" style="padding: 0.4rem 0.75rem; font-size: 0.875rem; margin-left:1rem; background: var(--danger);">
+              Stop & Rescan
+            </button>
+          </div>
+          <div class="stats">
+            <span class="stat-pill">Total: <b id="stat-total">0</b></span>
+            <span class="stat-pill success">Checked In: <b id="stat-yes">0</b></span>
+            <span class="stat-pill danger">Missing: <b id="stat-no">0</b></span>
+          </div>
+        </div>
+        
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Employee Name</th>
+                <th>Monitored WhatsApp Group</th>
+                <th class="text-right">Check-In Status</th>
+              </tr>
+            </thead>
+            <tbody id="table-body">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div class="projects-modal hidden" id="projects-modal" role="dialog" aria-modal="true" aria-labelledby="projects-modal-title">
+    <div class="projects-modal-card">
+      <div class="projects-modal-header">
+        <h2 id="projects-modal-title">Project Catalog</h2>
+        <button type="button" class="projects-modal-close" id="close-projects-modal-btn" aria-label="Close project editor">x</button>
+      </div>
+      <p class="projects-modal-sub">Double-click any project tag to rename it. Hover a tag to remove it.</p>
+
+      <div class="projects-add-row">
+        <input type="text" id="projects-new-input" class="modern-input projects-new-input" placeholder="Enter new project name">
+        <button type="button" class="primary-btn projects-add-btn" id="projects-add-btn">Add Project</button>
+      </div>
+
+      <div class="projects-tags-grid" id="projects-tags-grid"></div>
+    </div>
+  </div>
+
+  <div class="groups-modal hidden" id="groups-modal" role="dialog" aria-modal="true" aria-labelledby="groups-modal-title">
+    <div class="groups-modal-card">
+      <div class="groups-modal-header">
+        <h2 id="groups-modal-title">Employee Group Chats</h2>
+        <button type="button" class="groups-modal-close" id="close-groups-modal-btn" aria-label="Close group editor">x</button>
+      </div>
+      <p class="groups-modal-sub">Edit Name, Group Name, and Type. Saving writes employee_groups.csv with Checkins set to 0 for every row.</p>
+
+      <div class="groups-toolbar">
+        <div class="groups-add-inline">
+          <input type="text" id="groups-new-name" class="modern-input groups-input" placeholder="Name">
+          <input type="text" id="groups-new-group" class="modern-input groups-input" placeholder="Group Name">
+          <select id="groups-new-type" class="modern-input groups-select">
+            <option value="dev">dev</option>
+            <option value="qa">qa</option>
+            <option value="tester">tester</option>
+            <option value="va">va</option>
+            <option value="trainee">trainee</option>
+          </select>
+          <button type="button" class="primary-btn groups-add-inline-btn" id="groups-add-row-btn">Add New</button>
+        </div>
+        <button type="button" class="primary-btn" id="groups-save-btn">Save CSV</button>
+      </div>
+
+      <div class="groups-table-wrap">
+        <table class="groups-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Group Name</th>
+              <th>Type</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="groups-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="projects-modal.js"></script>
+  <script src="groups-modal.js"></script>
+  <script src="settings-modal.js"></script>
+</body>
+</html>

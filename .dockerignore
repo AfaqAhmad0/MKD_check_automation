@@ -1,0 +1,10 @@
+node_modules
+session
+.wwebjs_cache
+logs
+.env
+.git
+*.csv
+!repo_projects.csv
+!employee_groups.csv
+!repo_team.csv
