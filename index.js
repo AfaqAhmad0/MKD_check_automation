@@ -1232,6 +1232,9 @@ async function startBaileys() {
 async function connectWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
+  // Track whether we've received the initial history from WhatsApp
+  let historySyncDone = false;
+
   // Fetch the latest WhatsApp Web version to prevent 405 rejections
   let waVersion;
   try {
@@ -1283,7 +1286,12 @@ async function connectWhatsApp() {
         arr.shift();
       }
     }
-    saveStore(); // Force a save immediately after large sync
+    saveStore();
+
+    if (!historySyncDone) {
+      historySyncDone = true;
+      console.log('[BAILEYS] History sync complete. Store is ready for scanning.');
+    }
   });
 
   // ── QR Code delivery ──────────────────────────────────────────────
@@ -1306,7 +1314,7 @@ async function connectWhatsApp() {
 
       // Load group chats list
       try {
-        await delay(2000); // Small delay to let metadata sync
+        await delay(2000);
         const groups = await sock.groupFetchAllParticipating();
         allGroupChats = Object.values(groups).map(g => ({
           id: { _serialized: g.id },
@@ -1315,6 +1323,23 @@ async function connectWhatsApp() {
         }));
         console.log(`[BAILEYS] Fetched ${allGroupChats.length} group chats.`);
         loadCsv();
+
+        // For existing sessions: memoryStore already loaded from disk, no history.set fires.
+        // Wait 25s (longer than WA's 20s timeout) then scan from whatever is in store.
+        const existingStoreSize = [...memoryStore.values()].reduce((a, b) => a + b.length, 0);
+        if (existingStoreSize > 0) {
+          console.log(`[BAILEYS] Existing store has ${existingStoreSize} messages. Scanning immediately.`);
+          historySyncDone = true;
+        } else {
+          console.log('[BAILEYS] Awaiting WhatsApp history sync (up to 25s)...');
+          // Wait up to 25s for messaging-history.set before scanning with whatever we have
+          setTimeout(() => {
+            if (!historySyncDone) {
+              historySyncDone = true;
+              console.log('[BAILEYS] History sync timeout - scanning with live messages only.');
+            }
+          }, 25000);
+        }
       } catch (err) {
         console.warn(`[BAILEYS] Could not fetch groups: ${normalizeError(err)}`);
       }
@@ -1357,6 +1382,19 @@ async function connectWhatsApp() {
     const config = loadConfig();
 
     try {
+      // Wait up to 30s for history sync to complete before scanning
+      if (!historySyncDone) {
+        console.log('[SCAN] Waiting for WhatsApp history sync to complete...');
+        updateState('scanning', 'Waiting for WhatsApp history sync...');
+        for (let i = 0; i < 60; i++) {
+          await delay(500);
+          if (historySyncDone) break;
+        }
+        if (!historySyncDone) {
+          console.warn('[SCAN] History sync never completed, scanning with whatever is in store.');
+        }
+      }
+
       updateState('scanning', 'Scanning past history...');
       const scanThresholdMs = Date.now() - lookbackHours * 60 * 60 * 1000;
 
@@ -1376,8 +1414,8 @@ async function connectWhatsApp() {
         broadcastEvent('progress', { percentage, groupName });
 
         try {
-          // Baileys: fetch recent messages via store or direct query
           const msgs = await fetchRecentGroupMessages(groupJid, HISTORY_FETCH_LIMIT);
+          console.log(`[SCAN] Group '${groupName}': ${msgs.length} messages in store.`);
 
           for (const msg of msgs) {
             const msgTimestampMs = (msg.messageTimestamp || 0) * 1000;
