@@ -30,41 +30,41 @@ The Check-in Tracking Dashboard is a specialized, centralized automation applica
 
 ### 3.1 Stack Breakdown
 - **Backend Infrastructure**: Node.js, Express.js (REST API logic)
-- **WhatsApp Bridge**: `whatsapp-web.js` utilizing headless Puppeteer (Chromium browser sandbox)
+- **WhatsApp Bridge**: `@whiskeysockets/baileys` entirely replacing older Puppeteer/Chrome architectures with a lightweight native WebSocket connection.
 - **Frontend Interface**: Pure Vanilla JavaScript, HTML5, CSS3 built on CSS Grid/Flexbox
-- **Persistence Layer**: Local CSV file management (`employee_groups.csv`, `repo_projects.csv`, `repo_team.csv`, `projects.csv`, `checkout_projects.csv`) 
+- **Persistence Layer**: Local CSV file management (`employee_groups.csv`, `repo_projects.csv`, `repo_team.csv`, `checkout_projects.csv`) 
 
 ### 3.2 Stateless Cloud Environment Constraints
-To allow pushing this application to GitHub safely and deploying it in a containerized cloud environment, the application was aggressively refactored to be **100% Stateless regarding API Keys and Session Logs**.
+To allow pushing this application to GitHub safely and deploying it in a containerized cloud environment with minimal RAM (e.g., Koyeb/Render free tiers), the application was aggressively refactored.
 
-#### Zero-Disk API Key Management
+#### Ephemeral API Key Management
 - **`settings-modal.js`**: Serializes your AI Keys (Gemini, Groq, Cerebras) and Gitea tokens entirely into the browser's `localStorage` cache.
-- **`checkout.js`**: Whenever the user clicks "Run AI Extraction", the script fetches the keys from `localStorage` and injects them dynamically into the request payload (`req.body.apiKeys`, `req.body.giteaKey`).
-- **`index.js`**: Function purely as a dumb pipe, using the keys sent in the payload for a single transaction, immediately dropping them afterwards. Keys are never saved to `.env`.
+- **`checkout.js`**: Whenever the user clicks "Run AI Extraction", the script fetches the keys from `localStorage` and injects them dynamically into the request payload.
+- **`index.js`**: Functions purely as a dumb pipe, using the keys sent in the payload for a single transaction, immediately dropping them afterwards. Keys are never saved to `.env`.
 
-#### Ephemeral WhatsApp Execution
-- Because Node.js containers cannot persist data between restarts gracefully (without explicit volume mounts), `whatsapp-web.js` uses `NoAuth`.
-- This ensures the application never generates a `session/` folder on disk. Instead, the application will provide a fresh QR code snippet for the container logs or dashboard.
+#### Session Persistence & Auth State
+- `@whiskeysockets/baileys` uses `useMultiFileAuthState` to save WebSocket session credentials to a local `baileys_auth/` directory.
+- This folder is added to `.gitignore` and `.dockerignore` to prevent leaking session tokens to version control.
+- In production, it is highly recommended to mount a persistent volume to `baileys_auth/` so the container does not require a fresh QR scan upon every deployment reboot.
 
 #### In-Memory Extraction Pipeline
-- Background 24/7 logging (`.on('message')`) that continuously appended to `logs/matches.json` was purged.
-- When `/api/process-checkouts` is pinged by the frontend, the server rapidly scans recent live message history natively via `whatsapp-web.js` limits and pipes it straight to the LLMs, discarding it afterward.
+- **Custom Memory Store**: Because native Baileys plugins consume too much RAM, the app uses a custom `memoryStore` Map. It retains exactly the 500 most recent messages exactly per tracked group.
+- **Live WebSocket Feed**: Background `messages.upsert` listeners continuously append live messages to the cache. Real-time check-ins trigger live spreadsheet UI updates instantly without manual polling.
+- **Edited Message Support**: The pipeline deeply inspects WhatsApp payloads, extracting text not just from standard messages, but from media captions and deeply nested `protocolMessage.editedMessage` structures to prevent users escaping tracking by editing posts.
 
 ---
 
 ## 4. Container Deployment & Docker Nuances
 
-You **cannot** deploy this repository to serverless edge functions platforms (such as Netlify/Vercel or AWS Lambda). 
-`whatsapp-web.js` fundamentally spawns a background Chromium executable which stays alive indefinitely holding WebSocket connections. 
+The removal of `whatsapp-web.js` means this application no longer requires a 300MB+ Chromium browser sandbox. It now strictly uses pure Node Websockets.
 
-**Recommended Host:** Render.com Web Services (or Railway/Fly.io) using the bundled `Dockerfile`.
+**Recommended Host:** Koyeb or Render.com Web Services using the bundled `Dockerfile`.
 
 ### 4.1 The Docker Pipeline Checks
-A significant amount of engineering went into the `Dockerfile` to adapt the official Puppeteer Linux image for Render cloud constraints:
-1. **User Ownership (`--chown=pptruser:pptruser`)**: We execute `COPY` commands directly tied to the non-root `pptruser` user. 
-2. **Explicit Puppeteer Install**: The latest iterations of Puppeteer containers set `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD` globally. We explicitly pass `RUN npx puppeteer browsers install chrome` during the build layer to ensure the Chromium cache drops physically into `~/.cache/puppeteer`.
-3. **Array Fallback**: Over-engineered path fallback routing exists in `index.js`. If the docker environment variables disappear, it scans `/opt/google/...` and `/usr/bin/...` manually to rescue the `executablePath` before throwing a Fatal Startup block.
-4. **0.0.0.0 Port Binding**: Express routing `app.listen()` explicitly defines `0.0.0.0`. Defaulting to `localhost` triggers Render to assume the container is dead and kill the instance.
+Because we removed Puppeteer, the `Dockerfile` is now drastically simpler and faster to build:
+1. **Base Image**: Uses `node:20-slim`, reducing structural weight.
+2. **0.0.0.0 Port Binding**: Express routing `app.listen()` explicitly defines `0.0.0.0`. Defaulting to `localhost` triggers cloud hosts to assume the container is dead and kill the instance.
+3. **No Root Ownership Hacks**: The application no longer requires tricky `pptruser` user changes.
 
 ---
 
