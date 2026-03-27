@@ -1,8 +1,9 @@
 node_modules
+.env
+logs
 session
 .wwebjs_cache
-logs
-.env
+baileys_auth
 .git
 *.csv
 !repo_projects.csv

@@ -3,10 +3,11 @@ const path = require("path");
 require("dotenv").config();
 const express = require("express");
 const qrcode = require("qrcode-terminal");
-const { Client, NoAuth } = require("whatsapp-web.js");
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchMessageHistory } = require("@whiskeysockets/baileys");
 const { matchRules } = require("./matcher");
 
 const HISTORY_FETCH_LIMIT = 500;
+const AUTH_DIR = path.resolve(__dirname, 'baileys_auth');
 
 // Setup Express UI Server
 const app = express();
@@ -62,16 +63,6 @@ function normalizeError(error) {
   return String(error);
 }
 
-function isTransientExecutionContextError(error) {
-  const message = normalizeError(error).toLowerCase();
-  return (
-    message.includes("execution context was destroyed") ||
-    message.includes("cannot find context with specified id") ||
-    message.includes("target closed") ||
-    message.includes("navigation")
-  );
-}
-
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -87,30 +78,8 @@ function loadConfig() {
   return JSON.parse(rawConfig);
 }
 
-function clearSessionLocks(sessionPath) {
-  try {
-    const resolved = path.resolve(sessionPath || './session');
-    const profileDir = path.join(resolved, 'session');
-    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
-
-    for (const fileName of lockFiles) {
-      const target = path.join(profileDir, fileName);
-      if (fs.existsSync(target)) {
-        try {
-          fs.unlinkSync(target);
-          console.log(`[SESSION_LOCK] Removed stale lock: ${target}`);
-        } catch (err) {
-          console.warn(`[SESSION_LOCK] Could not remove lock ${target}: ${normalizeError(err)}`);
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[SESSION_LOCK] Skip lock cleanup: ${normalizeError(err)}`);
-  }
-}
-
-function getSenderLabel(message) {
-  return message._data?.notifyName || message.author || message.from || "unknown";
+function getSenderLabel(msg) {
+  return msg.pushName || msg.key?.participant?.split('@')[0] || msg.key?.remoteJid?.split('@')[0] || 'unknown';
 }
 
 function getMessageTimestampIso(message) {
@@ -1219,14 +1188,11 @@ app.post('/api/check-repo-updates', async (req, res) => {
 });
 
 
-async function run() {
-  const nodeMajor = Number(process.versions.node.split(".")[0]);
-  if (Number.isFinite(nodeMajor) && nodeMajor >= 22) {
-    console.warn("[WARN] Detected Node.js 22+. whatsapp-web.js is generally more stable on Node.js 20 LTS.");
-  }
+// ── Baileys WhatsApp Connection ───────────────────────────────────────
+let sock = null;
 
+async function startBaileys() {
   const config = loadConfig();
-  clearSessionLocks(config.sessionPath);
 
   // Start Express UI Server
   const PORT = process.env.PORT || 3000;
@@ -1235,84 +1201,141 @@ async function run() {
     console.log(`[UI] => Please open http://localhost:${PORT} in your browser.`);
   });
 
-  const chromePaths = [
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    '/opt/google/chrome/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium'
-  ];
-  let resolvedChromePath = chromePaths.find(p => p && fs.existsSync(p));
-  if (!resolvedChromePath && process.platform !== 'win32') {
-    console.warn("[WARN] Could not find Chrome/Chromium installation. whatsapp-web.js may fail to start!");
-  }
+  await connectWhatsApp();
+}
 
-  const client = new Client({
-    authStrategy: new NoAuth(),
-    puppeteer: {
-      headless: true,
-      executablePath: resolvedChromePath || undefined,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        "--disable-extensions",
-      ],
-    },
+async function connectWhatsApp() {
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+
+  sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true,
+    browser: ['CheckinTracker', 'Chrome', '22.0'],
+    syncFullHistory: false,
   });
 
+  // ── QR Code delivery ──────────────────────────────────────────────
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log('[BAILEYS] QR received. Scan with WhatsApp.');
+      qrcode.generate(qr, { small: true });
+      qrString = qr;
+      updateState('qr', 'Authentication Required. Please scan QR.');
+      broadcastEvent('qr', qr);
+    }
+
+    if (connection === 'open') {
+      console.log('[BAILEYS] Connection established!');
+      readyAnnounced = true;
+      qrString = '';
+      updateState('ready', 'WhatsApp is connected.');
+
+      // Load group chats list
+      try {
+        await delay(2000); // Small delay to let metadata sync
+        const groups = await sock.groupFetchAllParticipating();
+        allGroupChats = Object.values(groups).map(g => ({
+          id: { _serialized: g.id },
+          name: g.subject || g.id,
+          isGroup: true
+        }));
+        console.log(`[BAILEYS] Fetched ${allGroupChats.length} group chats.`);
+        loadCsv();
+      } catch (err) {
+        console.warn(`[BAILEYS] Could not fetch groups: ${normalizeError(err)}`);
+      }
+    }
+
+    if (connection === 'close') {
+      readyAnnounced = false;
+      startupScanCompleted = false;
+
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+      console.warn(`[BAILEYS] Connection closed. Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+
+      if (shouldReconnect) {
+        updateState('init', 'Reconnecting to WhatsApp...');
+        await delay(3000);
+        await connectWhatsApp();
+      } else {
+        // User logged out; clear session so they get a fresh QR
+        updateState('qr', 'Logged out. Scan QR to reconnect.');
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+          console.log('[BAILEYS] Auth cleared after logout.');
+        } catch (e) { /* ignore */ }
+        await delay(2000);
+        await connectWhatsApp();
+      }
+    }
+  });
+
+  // ── Persist auth credentials on update ─────────────────────────────
+  sock.ev.on('creds.update', saveCreds);
+
+  // ── Live message listener (stub — no disk logging) ──────────────
+  sock.ev.on('messages.upsert', ({ messages }) => {
+    // Intentionally empty: stateless execution, no live logging.
+  });
+
+  // ── History Scan Function ──────────────────────────────────────────
   _triggerPerformReadySync = async (lookbackHours, force = false) => {
     if (!readyAnnounced || readySyncInProgress || (!force && startupScanCompleted)) return [];
     readySyncInProgress = true;
     const collectedMatches = [];
+    const config = loadConfig();
 
     try {
       updateState('scanning', 'Scanning past history...');
       const scanThresholdMs = Date.now() - lookbackHours * 60 * 60 * 1000;
-
-      const chats = await client.getChats();
-      allGroupChats = chats.filter((chat) => chat.isGroup);
 
       loadCsv();
       for (const row of csvData) {
         row.checkin = 0;
       }
 
+      const targetIds = [...targetGroupIds];
       let i = 0;
-      let totalToScan = targetGroupIds.size || 1;
-      
-      for (const chat of allGroupChats) {
-        if (!targetGroupIds.has(chat.id._serialized)) continue;
+      const totalToScan = targetIds.length || 1;
 
+      for (const groupJid of targetIds) {
         i++;
+        const groupName = groupNameById.get(groupJid) || groupJid;
         const percentage = Math.round((i / totalToScan) * 100);
-        broadcastEvent('progress', { percentage, groupName: chat.name });
+        broadcastEvent('progress', { percentage, groupName });
 
         try {
-          const messages = await chat.fetchMessages({ limit: HISTORY_FETCH_LIMIT });
-          for (const msg of messages) {
-            const msgTimestampMs = Number(msg.timestamp) * 1000;
+          // Baileys: fetch recent messages via store or direct query
+          const msgs = await fetchRecentGroupMessages(groupJid, HISTORY_FETCH_LIMIT);
+
+          for (const msg of msgs) {
+            const msgTimestampMs = (msg.messageTimestamp || 0) * 1000;
             if (!Number.isFinite(msgTimestampMs) || msgTimestampMs < scanThresholdMs) continue;
 
-            const messageBody = typeof msg.body === "string" ? msg.body : "";
-            const matchedRules = matchRules(messageBody, config.rules);
+            const messageBody = msg.message?.conversation
+              || msg.message?.extendedTextMessage?.text
+              || '';
+            if (!messageBody) continue;
 
+            const matchedRules = matchRules(messageBody, config.rules);
             if (matchedRules.length === 0) continue;
 
             for (const row of csvData) {
-              if (row.groupId === chat.id._serialized) {
+              if (row.groupId === groupJid) {
                 row.checkin = 1;
               }
             }
 
-            const messageId = msg.id?._serialized;
+            const messageId = msg.key?.id;
             if (messageId && loggedMessageIds.has(messageId)) continue;
 
             const matchPayload = {
               timestamp: new Date(msgTimestampMs).toISOString(),
-              groupName: chat.name,
+              groupName,
               sender: getSenderLabel(msg),
               messageBody,
               matchedRules,
@@ -1322,20 +1345,15 @@ async function run() {
             if (messageId) loggedMessageIds.add(messageId);
           }
         } catch (error) {
-          const details = normalizeError(error);
-          if (isTransientExecutionContextError(error)) {
-            console.warn(`[STARTUP_SCAN_RETRYABLE] Group '${chat.name}': ${details}`);
-          } else {
-            console.error(`[STARTUP_SCAN_ERROR] Group '${chat.name}': ${details}`);
-          }
+          console.error(`[SCAN_ERROR] Group '${groupName}': ${normalizeError(error)}`);
         }
       }
 
       saveCsv();
       startupScanCompleted = true;
       updateState('monitoring', 'Live monitoring is active.');
-      console.log("[STARTUP] Historical scan complete. Fetched " + collectedMatches.length + " matches.");
-      
+      console.log('[STARTUP] Historical scan complete. Fetched ' + collectedMatches.length + ' matches.');
+
       return collectedMatches;
     } catch (error) {
       console.error(`[READY_ERROR] ${normalizeError(error)}`);
@@ -1344,65 +1362,37 @@ async function run() {
       readySyncInProgress = false;
     }
   };
+}
 
-  client.on("qr", (qr) => {
-    console.log("Scan this QR code with WhatsApp (also available on Web UI):");
-    qrcode.generate(qr, { small: true });
-    updateState('qr', 'Authentication Required. Please scan QR.');
-    qrString = qr;
-    broadcastEvent('qr', qr);
-  });
-
-  client.on("ready", () => {
-    if (!readyAnnounced) {
-      console.log("Client is ready");
-      readyAnnounced = true;
-      updateState('ready', 'Whatsapp is connected.');
-    }
-  });
-
-  client.on("message", async (message) => {
-    // Live file logging removed for stateless execution!
-  });
-
-  client.on("auth_failure", (message) => console.error(`[AUTH_FAILURE] ${message}`));
-
-  client.on("disconnected", (reason) => {
-    console.error(`[DISCONNECTED] ${reason}`);
-    readyAnnounced = false;
-    startupScanCompleted = false;
-    updateState('init', 'Bot Disconnected. Waiting...');
-  });
-
-  client.on("change_state", (state) => {
-    console.log(`[STATE] ${state}`);
-  });
-
-  process.on("unhandledRejection", (reason) => {
-    if (isTransientExecutionContextError(reason)) return;
-    console.error(`[UNHANDLED_REJECTION] ${normalizeError(reason)}`);
-  });
-
-  process.on("uncaughtException", (error) => {
-    if (isTransientExecutionContextError(error)) return;
-    console.error(`[UNCAUGHT_EXCEPTION] ${normalizeError(error)}`);
-  });
-
-  const maxInitAttempts = 5;
-  for (let attempt = 1; attempt <= maxInitAttempts; attempt += 1) {
+// ── Fetch recent messages from a specific group ──────────────────────
+async function fetchRecentGroupMessages(jid, limit) {
+  try {
+    // Use the Baileys low-level message query
+    const messages = await sock.fetchMessageHistory(limit, { remoteJid: jid }, {});
+    return Array.isArray(messages) ? messages : [];
+  } catch (err) {
+    // Fallback: some Baileys versions use different message fetch APIs
     try {
-      await client.initialize();
-      return;
-    } catch (error) {
-      const details = normalizeError(error);
-      if (!isTransientExecutionContextError(error)) throw error;
-      if (attempt === maxInitAttempts) throw new Error(`Init failed.`);
-      await delay(2000 * attempt);
+      const result = await sock.loadMessages(jid, limit);
+      return Array.isArray(result) ? result : [];
+    } catch {
+      console.warn(`[FETCH_MSGS] Could not load messages for ${jid}: ${normalizeError(err)}`);
+      return [];
     }
   }
 }
 
-run().catch((error) => {
+// ── Global error handlers ────────────────────────────────────────────
+process.on('unhandledRejection', (reason) => {
+  console.error(`[UNHANDLED_REJECTION] ${normalizeError(reason)}`);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error(`[UNCAUGHT_EXCEPTION] ${normalizeError(error)}`);
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────
+startBaileys().catch((error) => {
   console.error(`[FATAL_STARTUP] ${normalizeError(error)}`);
   process.exit(1);
 });

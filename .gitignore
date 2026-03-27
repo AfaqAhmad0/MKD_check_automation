@@ -7,6 +7,7 @@ node_modules/
 # WhatsApp session data (contains auth tokens)
 session/
 .wwebjs_cache/
+baileys_auth/
 
 # Runtime data & logs
 logs/
