@@ -3,7 +3,7 @@ const path = require("path");
 require("dotenv").config();
 const express = require("express");
 const qrcode = require("qrcode-terminal");
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchMessageHistory } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestWaWebVersion } = require("@whiskeysockets/baileys");
 const { matchRules } = require("./matcher");
 
 const HISTORY_FETCH_LIMIT = 500;
@@ -1207,11 +1207,22 @@ async function startBaileys() {
 async function connectWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
+  // Fetch the latest WhatsApp Web version to prevent 405 rejections
+  let waVersion;
+  try {
+    const { version } = await fetchLatestWaWebVersion({});
+    waVersion = version;
+    console.log(`[BAILEYS] Using WA Web version: ${version}`);
+  } catch (e) {
+    console.warn(`[BAILEYS] Could not fetch latest version, using default.`);
+  }
+
   sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
-    browser: ['CheckinTracker', 'Chrome', '22.0'],
+    browser: Browsers.ubuntu('CheckinTracker'),
+    ...(waVersion ? { version: waVersion } : {}),
     syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
   });
 
   // ── QR Code delivery ──────────────────────────────────────────────
