@@ -8,6 +8,31 @@ const { matchRules } = require("./matcher");
 
 const HISTORY_FETCH_LIMIT = 500;
 const AUTH_DIR = path.resolve(__dirname, 'baileys_auth');
+const STORE_PATH = path.resolve(__dirname, 'baileys_store.json');
+
+// Remove Baileys external store reference since it was deprecated in their recent versions.
+const memoryStore = new Map();
+
+function saveStore() {
+  try {
+    const backup = Array.from(memoryStore.entries());
+    fs.writeFileSync(STORE_PATH, JSON.stringify(backup));
+  } catch (err) {}
+}
+
+function loadStore() {
+  try {
+    if (fs.existsSync(STORE_PATH)) {
+      const backup = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
+      for (const [jid, msgs] of backup) {
+        memoryStore.set(jid, msgs);
+      }
+    }
+  } catch (err) {}
+}
+
+loadStore();
+setInterval(saveStore, 30_000);
 
 // Setup Express UI Server
 const app = express();
@@ -1221,8 +1246,44 @@ async function connectWhatsApp() {
     auth: state,
     browser: Browsers.ubuntu('CheckinTracker'),
     ...(waVersion ? { version: waVersion } : {}),
-    syncFullHistory: false,
+    syncFullHistory: true,
     generateHighQualityLinkPreview: false,
+  });
+
+  // ── Live message listener (and History sync catcher) ──────────────
+  sock.ev.on('messages.upsert', ({ messages }) => {
+    for (const msg of messages) {
+      if (!msg.message) continue;
+      const jid = msg.key?.remoteJid;
+      if (!jid) continue;
+
+      if (!memoryStore.has(jid)) memoryStore.set(jid, []);
+      const arr = memoryStore.get(jid);
+      arr.push(msg);
+      
+      // Cap at limit to save RAM
+      if (arr.length > HISTORY_FETCH_LIMIT) {
+        arr.shift();
+      }
+    }
+  });
+
+  sock.ev.on('messaging-history.set', ({ messages }) => {
+    console.log(`[BAILEYS] Received initial history sync with ${messages.length} messages.`);
+    for (const msg of messages) {
+      if (!msg.message) continue;
+      const jid = msg.key?.remoteJid;
+      if (!jid) continue;
+
+      if (!memoryStore.has(jid)) memoryStore.set(jid, []);
+      const arr = memoryStore.get(jid);
+      arr.push(msg);
+      
+      if (arr.length > HISTORY_FETCH_LIMIT) {
+        arr.shift();
+      }
+    }
+    saveStore(); // Force a save immediately after large sync
   });
 
   // ── QR Code delivery ──────────────────────────────────────────────
@@ -1287,11 +1348,6 @@ async function connectWhatsApp() {
 
   // ── Persist auth credentials on update ─────────────────────────────
   sock.ev.on('creds.update', saveCreds);
-
-  // ── Live message listener (stub — no disk logging) ──────────────
-  sock.ev.on('messages.upsert', ({ messages }) => {
-    // Intentionally empty: stateless execution, no live logging.
-  });
 
   // ── History Scan Function ──────────────────────────────────────────
   _triggerPerformReadySync = async (lookbackHours, force = false) => {
@@ -1378,18 +1434,12 @@ async function connectWhatsApp() {
 // ── Fetch recent messages from a specific group ──────────────────────
 async function fetchRecentGroupMessages(jid, limit) {
   try {
-    // Use the Baileys low-level message query
-    const messages = await sock.fetchMessageHistory(limit, { remoteJid: jid }, {});
-    return Array.isArray(messages) ? messages : [];
+    const rawMsgs = memoryStore.get(jid) || [];
+    // Memory store caps at 500, but we slice the end off to ensure limits
+    return rawMsgs.slice(-limit);
   } catch (err) {
-    // Fallback: some Baileys versions use different message fetch APIs
-    try {
-      const result = await sock.loadMessages(jid, limit);
-      return Array.isArray(result) ? result : [];
-    } catch {
-      console.warn(`[FETCH_MSGS] Could not load messages for ${jid}: ${normalizeError(err)}`);
-      return [];
-    }
+    console.warn(`[FETCH_MSGS] Could not load messages from store for ${jid}: ${normalizeError(err)}`);
+    return [];
   }
 }
 
