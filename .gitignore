@@ -8,6 +8,7 @@ node_modules/
 session/
 .wwebjs_cache/
 baileys_auth/
+baileys_store.json
 
 # Runtime data & logs
 logs/
