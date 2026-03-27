@@ -1254,7 +1254,7 @@ async function connectWhatsApp() {
   });
 
   // ── Live message listener (and History sync catcher) ──────────────
-  sock.ev.on('messages.upsert', ({ messages }) => {
+  sock.ev.on('messages.upsert', ({ messages, type }) => {
     for (const msg of messages) {
       if (!msg.message) continue;
       const jid = msg.key?.remoteJid;
@@ -1268,6 +1268,43 @@ async function connectWhatsApp() {
       arr.sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0));
       if (arr.length > HISTORY_FETCH_LIMIT) {
         arr.splice(0, arr.length - HISTORY_FETCH_LIMIT);
+      }
+
+      // Live Scanning for Real-Time UI Updates (only for fresh messages)
+      if (type === 'notify' && targetGroupIds.has(jid)) {
+        const mObj = msg.message;
+        const messageBody = mObj?.conversation 
+          || mObj?.extendedTextMessage?.text 
+          || mObj?.imageMessage?.caption 
+          || mObj?.videoMessage?.caption 
+          || mObj?.documentWithCaptionMessage?.message?.documentMessage?.caption 
+          || mObj?.protocolMessage?.editedMessage?.conversation
+          || mObj?.protocolMessage?.editedMessage?.extendedTextMessage?.text
+          || '';
+          
+        if (messageBody) {
+          const config = loadConfig();
+          const matchedRules = matchRules(messageBody, config.rules);
+          const checkoutRegex = /(?:check(?:ed|ing|s)?[\\s-]?out|work[\\s-]*summary|repo[\\s-]*update[\\s-]*status|video[\\s-]*summary)/i;
+          const isCheckout = checkoutRegex.test(messageBody) || matchedRules.includes('checkout_detection');
+
+          if (matchedRules.includes('checkin_detection') || isCheckout) {
+            let updated = false;
+            for (const row of csvData) {
+              if (row.groupId === jid) {
+                if (matchedRules.includes('checkin_detection')) row.checkin = 1;
+                // Note: Checkout text is usually aggregated on demand via compiling logic,
+                // but we trigger UI refresh here when any matching text drops.
+                updated = true;
+              }
+            }
+            if (updated) {
+              saveCsv();
+              broadcastEvent('live_update', {});
+              console.log(`[LIVE_OP] Caught check-in/out for group: ${jid}`);
+            }
+          }
+        }
       }
     }
   });
@@ -1426,9 +1463,16 @@ async function connectWhatsApp() {
             const msgTimestampMs = (msg.messageTimestamp || 0) * 1000;
             if (!Number.isFinite(msgTimestampMs) || msgTimestampMs < scanThresholdMs) continue;
 
-            const messageBody = msg.message?.conversation
-              || msg.message?.extendedTextMessage?.text
+            const mObj = msg.message;
+            const messageBody = mObj?.conversation
+              || mObj?.extendedTextMessage?.text
+              || mObj?.imageMessage?.caption
+              || mObj?.videoMessage?.caption
+              || mObj?.documentWithCaptionMessage?.message?.documentMessage?.caption
+              || mObj?.protocolMessage?.editedMessage?.conversation
+              || mObj?.protocolMessage?.editedMessage?.extendedTextMessage?.text
               || '';
+              
             if (!messageBody) continue;
 
             const matchedRules = matchRules(messageBody, config.rules);
