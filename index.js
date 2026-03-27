@@ -1264,9 +1264,10 @@ async function connectWhatsApp() {
       const arr = memoryStore.get(jid);
       arr.push(msg);
       
-      // Cap at limit to save RAM
+      // Sort ascending so newest are at the end, then keep top 500
+      arr.sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0));
       if (arr.length > HISTORY_FETCH_LIMIT) {
-        arr.shift();
+        arr.splice(0, arr.length - HISTORY_FETCH_LIMIT);
       }
     }
   });
@@ -1279,13 +1280,17 @@ async function connectWhatsApp() {
       if (!jid) continue;
 
       if (!memoryStore.has(jid)) memoryStore.set(jid, []);
-      const arr = memoryStore.get(jid);
-      arr.push(msg);
-      
+      memoryStore.get(jid).push(msg);
+    }
+
+    // Now cap all groups accurately by sorting them by timestamp first (Ascending: Oldest first)
+    for (const [jid, arr] of memoryStore.entries()) {
+      arr.sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0));
       if (arr.length > HISTORY_FETCH_LIMIT) {
-        arr.shift();
+        arr.splice(0, arr.length - HISTORY_FETCH_LIMIT);
       }
     }
+
     saveStore();
 
     if (!historySyncDone) {
@@ -1436,7 +1441,8 @@ async function connectWhatsApp() {
             }
 
             const messageId = msg.key?.id;
-            if (messageId && loggedMessageIds.has(messageId)) continue;
+            // Skip already logged IDs unless this is a force-scan (manual extraction)
+            if (!force && messageId && loggedMessageIds.has(messageId)) continue;
 
             const matchPayload = {
               timestamp: new Date(msgTimestampMs).toISOString(),
