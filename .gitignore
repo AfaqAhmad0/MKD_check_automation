@@ -28,6 +28,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Packaged Windows build output
+dist/
+
 # Gemini / Antigravity workspace
 .gemini/
 .github/

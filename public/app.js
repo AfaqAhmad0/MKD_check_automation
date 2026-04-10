@@ -31,6 +31,14 @@ let eventSource = null;
 let currentData = [];
 let latestQrValue = '';
 
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function normalizeQrPayload(payload) {
   if (typeof payload !== 'string') return '';
   const raw = payload.trim();
@@ -165,6 +173,10 @@ function renderTable(data) {
     tr.style.animationDelay = `${idx * 0.02}s`;
     tr.className = 'fade-in';
     
+    const detected = row.checkinText && String(row.checkinText).trim()
+      ? `<span class="checkin-text">${escapeHtml(String(row.checkinText))}</span>`
+      : '<span class="checkin-text-muted">—</span>';
+
     tr.innerHTML = `
       <td style="font-weight: 500;">${row.name}</td>
       <td><span class="group-name">${row.group}</span></td>
@@ -174,6 +186,7 @@ function renderTable(data) {
           <span class="slider"></span>
         </label>
       </td>
+      <td class="checkin-text-cell">${detected}</td>
     `;
     elements.tableBody.appendChild(tr);
   });

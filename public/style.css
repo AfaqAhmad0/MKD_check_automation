@@ -551,6 +551,10 @@ body.modal-locked {
 
 .group-name { font-family: monospace; color: #93c5fd; font-size: 0.875rem; background: rgba(59, 130, 246, 0.1); padding: 0.2rem 0.5rem; border-radius: 0.3rem;}
 
+.checkin-text-cell { max-width: 28rem; font-size: 0.875rem; line-height: 1.4; color: var(--text-main, #e2e8f0); word-break: break-word; }
+.checkin-text { display: block; }
+.checkin-text-muted { color: var(--text-muted); font-style: italic; }
+
 /* Checkout page enhancements */
 .checkout-control-panel {
   padding: 1.4rem;

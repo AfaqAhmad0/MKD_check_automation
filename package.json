@@ -6,17 +6,46 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "build:bundle": "esbuild index.js --bundle --platform=node --format=cjs --target=node20 --outfile=dist/bundle.cjs --log-level=warning",
+    "build:win": "npm run build:bundle && node scripts/prepare-pkg-assets.js && node scripts/win-kill-exe-if-running.js && pkg dist/bundle.cjs --targets node20-win-x64 -o dist/checkin-tracking.exe && node scripts/prepare-pkg-assets.js",
+    "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1"
+  },
+  "pkg": {
+    "assets": [
+      "dist/public/**/*",
+      "dist/config.json",
+      "dist/repo_projects.csv",
+      "dist/repo_team.csv"
+    ]
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@whiskeysockets/baileys": "^6.7.16",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "puppeteer-core": "^24.40.0",
     "qrcode": "^1.5.4",
-    "qrcode-terminal": "^0.12.0"
-  }
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.6"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.14.1",
+    "esbuild": "^0.27.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AfaqAhmad0/MKD_check_automation.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/AfaqAhmad0/MKD_check_automation/issues"
+  },
+  "homepage": "https://github.com/AfaqAhmad0/MKD_check_automation#readme"
 }

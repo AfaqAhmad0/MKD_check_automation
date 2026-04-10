@@ -54,6 +54,10 @@ npm start
 
 Open **http://localhost:3000** in your browser. On first run, scan the WhatsApp QR code to authenticate.
 
+### Windows executable (local install)
+
+To produce a standalone `.exe` and data layout next to it (no server deploy), see [BUILD.md](BUILD.md).
+
 ## Architecture
 
 ```
