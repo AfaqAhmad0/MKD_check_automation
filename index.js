@@ -3,7 +3,7 @@ const path = require("path");
 require("dotenv").config();
 const express = require("express");
 const qrcode = require("qrcode-terminal");
-const { Client, NoAuth } = require("whatsapp-web.js");
+const { Client, NoAuth, LocalAuth } = require("whatsapp-web.js");
 const { matchRules } = require("./matcher");
 
 const HISTORY_FETCH_LIMIT = 500;
@@ -68,7 +68,8 @@ function isTransientExecutionContextError(error) {
     message.includes("execution context was destroyed") ||
     message.includes("cannot find context with specified id") ||
     message.includes("target closed") ||
-    message.includes("navigation")
+    message.includes("navigation") ||
+    message.includes("waitforchatloading")  // WhatsApp Web internal API breakage
   );
 }
 
@@ -1235,19 +1236,27 @@ async function run() {
     console.log(`[UI] => Please open http://localhost:${PORT} in your browser.`);
   });
 
+  const puppeteerOptions = {
+    headless: true,
+    timeout: 60000,
+    protocolTimeout: 300000,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--disable-extensions",
+    ],
+  };
+
+  // Only use the hardcoded Linux Chrome path if it actually exists (e.g., in Docker)
+  if (fs.existsSync('/usr/bin/google-chrome-stable')) {
+    puppeteerOptions.executablePath = '/usr/bin/google-chrome-stable';
+  }
+
   const client = new Client({
-    authStrategy: new NoAuth(),
-    puppeteer: {
-      headless: true,
-      executablePath: '/usr/bin/google-chrome-stable',
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        "--disable-extensions",
-      ],
-    },
+    authStrategy: new LocalAuth({ dataPath: config.sessionPath || './.wwebjs_auth' }),
+    puppeteer: puppeteerOptions,
   });
 
   _triggerPerformReadySync = async (lookbackHours, force = false) => {
@@ -1259,7 +1268,19 @@ async function run() {
       updateState('scanning', 'Scanning past history...');
       const scanThresholdMs = Date.now() - lookbackHours * 60 * 60 * 1000;
 
-      const chats = await client.getChats();
+      let chats = [];
+      let chatFetchAttempts = 0;
+      while (chatFetchAttempts < 5) {
+        try {
+          chats = await client.getChats();
+          break;
+        } catch (err) {
+          chatFetchAttempts++;
+          if (chatFetchAttempts >= 5) throw err;
+          console.warn(`[WARN] WhatsApp sync interrupted (context destroyed). Retrying chat fetch (${chatFetchAttempts}/5)...`);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+      }
       allGroupChats = chats.filter((chat) => chat.isGroup);
 
       loadCsv();
@@ -1278,9 +1299,21 @@ async function run() {
         broadcastEvent('progress', { percentage, groupName: chat.name });
 
         try {
-          const messages = await chat.fetchMessages({ limit: HISTORY_FETCH_LIMIT });
-          for (const msg of messages) {
-            const msgTimestampMs = Number(msg.timestamp) * 1000;
+          // Use a safe direct evaluate to read in-memory messages without triggering
+          // the broken loadEarlierMsgs/waitForChatLoading WhatsApp internal API.
+          const rawMessages = await chat.client.pupPage.evaluate(async (chatId) => {
+            try {
+              const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
+              if (!chat || !chat.msgs) return [];
+              const msgs = chat.msgs.getModelsArray().filter(m => !m.isNotification);
+              return msgs.map(m => window.WWebJS.getMessageModel(m));
+            } catch (e) {
+              return [];
+            }
+          }, chat.id._serialized);
+          const safeMessages = rawMessages;
+          for (const msg of safeMessages) {
+            const msgTimestampMs = Number(msg.t || msg.timestamp) * 1000;
             if (!Number.isFinite(msgTimestampMs) || msgTimestampMs < scanThresholdMs) continue;
 
             const messageBody = typeof msg.body === "string" ? msg.body : "";
@@ -1294,13 +1327,13 @@ async function run() {
               }
             }
 
-            const messageId = msg.id?._serialized;
+            const messageId = msg.id?._serialized || msg.id?.id;
             if (messageId && loggedMessageIds.has(messageId)) continue;
 
             const matchPayload = {
               timestamp: new Date(msgTimestampMs).toISOString(),
               groupName: chat.name,
-              sender: getSenderLabel(msg),
+              sender: msg._data?.notifyName || msg.notifyName || msg.id?.participant || msg.author || msg.from || 'unknown',
               messageBody,
               matchedRules,
             };
