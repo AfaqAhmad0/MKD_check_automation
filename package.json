@@ -5,11 +5,11 @@
   "description": "WhatsApp-based check-in/checkout tracking dashboard with AI extraction and Gitea repo monitoring",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js",
-    "build:bundle": "esbuild index.js --bundle --platform=node --format=cjs --target=node20 --outfile=dist/bundle.cjs --log-level=warning",
-    "build:win": "npm run build:bundle && node scripts/prepare-pkg-assets.js && node scripts/win-kill-exe-if-running.js && pkg dist/bundle.cjs --targets node20-win-x64 -o dist/checkin-tracking.exe && node scripts/prepare-pkg-assets.js",
-    "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1"
+    "start": "node init && node index.js",
+    "dev": "node init && node --watch index.js",
+    "build:bundle": "node init && esbuild index.js --bundle --platform=node --format=cjs --target=node20 --outfile=dist/bundle.cjs --log-level=warning",
+    "build:win": "node init && npm run build:bundle && node scripts/prepare-pkg-assets.js && node scripts/win-kill-exe-if-running.js && pkg dist/bundle.cjs --targets node20-win-x64 -o dist/checkin-tracking.exe && node scripts/prepare-pkg-assets.js",
+    "build:portable": "node init && powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1"
   },
   "pkg": {
     "assets": [
